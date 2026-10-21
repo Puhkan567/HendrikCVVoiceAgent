@@ -1,0 +1,8 @@
+{
+  "name": "Hendrik Puhkan - AI Voice Assistant",
+  "description": "Interactive real-time voice assistant representing Hendrik Puhkan for recruiters, employers, and clients, powered by Gemini Live audio.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
