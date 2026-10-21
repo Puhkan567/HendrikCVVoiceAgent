@@ -1,5 +1,5 @@
-import React from 'react';
-import { Volume2, Copy, Check, User, Sparkles, Trash2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Volume2, Copy, Check, Trash2 } from 'lucide-react';
 import type { MessageItem } from './VoiceAssistantHero';
 
 interface TranscriptHistoryProps {
@@ -7,6 +7,7 @@ interface TranscriptHistoryProps {
   onPlayTTS: (text: string) => void;
   onClear: () => void;
   isAudioPlaying: boolean;
+  language: 'en' | 'et';
 }
 
 export const TranscriptHistory: React.FC<TranscriptHistoryProps> = ({
@@ -14,8 +15,9 @@ export const TranscriptHistory: React.FC<TranscriptHistoryProps> = ({
   onPlayTTS,
   onClear,
   isAudioPlaying,
+  language,
 }) => {
-  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const copyToClipboard = (id: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -28,28 +30,27 @@ export const TranscriptHistory: React.FC<TranscriptHistoryProps> = ({
   }
 
   return (
-    <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 p-5 sm:p-6 backdrop-blur-md">
+    <div className="rounded-3xl bg-white dark:bg-slate-900/60 border border-slate-200/90 dark:border-slate-800/90 p-6 sm:p-7 shadow-sm transition-colors duration-200">
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-white tracking-tight">Spoken Conversation Log</h3>
-            <p className="text-xs text-slate-400">Real-time transcripts & audio playback</p>
-          </div>
+        <div>
+          <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">
+            {language === 'et' ? 'Vestluse logi' : 'Spoken Conversation Log'}
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            {language === 'et' ? 'Reaalaja transkriptsioon ja kõne taasesitus' : 'Real-time transcripts & speech playback'}
+          </p>
         </div>
 
         <button
           onClick={onClear}
-          className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors px-2.5 py-1 rounded-lg hover:bg-slate-800"
+          className="text-xs text-slate-400 dark:text-slate-500 hover:text-rose-500 dark:hover:text-rose-400 flex items-center gap-1 transition-colors px-2.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
         >
           <Trash2 className="w-3.5 h-3.5" />
-          <span>Clear Log</span>
+          <span>{language === 'et' ? 'Tühjenda' : 'Clear Log'}</span>
         </button>
       </div>
 
-      <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+      <div className="space-y-3.5 max-h-96 overflow-y-auto pr-1">
         {messages.map((msg) => {
           const isAssistant = msg.role === 'assistant';
           return (
@@ -57,57 +58,59 @@ export const TranscriptHistory: React.FC<TranscriptHistoryProps> = ({
               key={msg.id}
               className={`flex flex-col ${isAssistant ? 'items-start' : 'items-end'}`}
             >
-              <div className="flex items-center gap-2 mb-1 text-[11px] text-slate-400">
+              <div className="flex items-center gap-2 mb-1 text-[11px] text-slate-400 dark:text-slate-500">
                 {isAssistant ? (
                   <>
-                    <span className="font-semibold text-indigo-300">Hendrik Puhkan</span>
-                    <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20">
-                      Voice Persona
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">Hendrik Puhkan</span>
+                    <span>·</span>
+                    <span className="text-sky-700 dark:text-sky-400">
+                      {language === 'et' ? 'Häälassistent' : 'Voice Assistant'}
                     </span>
                   </>
                 ) : (
                   <>
-                    <span className="font-semibold text-slate-300">You (Caller / Recruiter)</span>
-                    <User className="w-3 h-3 text-slate-400" />
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                      {language === 'et' ? 'Teie (Värbaja / Küsija)' : 'You (Recruiter / Caller)'}
+                    </span>
                   </>
                 )}
-                <span className="text-slate-600">• {msg.timestamp}</span>
+                <span>·</span>
+                <span>{msg.timestamp}</span>
               </div>
 
               <div
-                className={`max-w-xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+                className={`max-w-xl rounded-2xl px-4 py-3 text-xs sm:text-sm leading-relaxed ${
                   isAssistant
-                    ? 'bg-slate-950/80 text-slate-200 border border-slate-800 rounded-tl-sm'
-                    : 'bg-indigo-600 text-white rounded-tr-sm'
+                    ? 'bg-slate-50 dark:bg-slate-950/80 text-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-800/80 rounded-tl-sm'
+                    : 'bg-slate-900 dark:bg-sky-600 text-white rounded-tr-sm shadow-xs'
                 }`}
               >
                 <p className="whitespace-pre-wrap">{msg.text}</p>
 
-                {/* Bottom actions for assistant message */}
                 {isAssistant && (
-                  <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                  <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between text-xs">
                     <button
                       onClick={() => onPlayTTS(msg.text)}
                       disabled={isAudioPlaying}
-                      className="inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
+                      className="inline-flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-400 hover:text-sky-800 dark:hover:text-sky-300 font-medium transition-colors"
                     >
                       <Volume2 className="w-3.5 h-3.5" />
-                      <span>Replay Voice</span>
+                      <span>{language === 'et' ? 'Kuula uuesti' : 'Replay Voice'}</span>
                     </button>
 
                     <button
                       onClick={() => copyToClipboard(msg.id, msg.text)}
-                      className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+                      className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
                     >
                       {copiedId === msg.id ? (
                         <>
-                          <Check className="w-3 h-3 text-emerald-400" />
-                          <span className="text-emerald-400">Copied</span>
+                          <Check className="w-3 h-3 text-emerald-500" />
+                          <span className="text-emerald-500">{language === 'et' ? 'Kopeeritud' : 'Copied'}</span>
                         </>
                       ) : (
                         <>
                           <Copy className="w-3 h-3" />
-                          <span>Copy</span>
+                          <span>{language === 'et' ? 'Kopeeri' : 'Copy'}</span>
                         </>
                       )}
                     </button>

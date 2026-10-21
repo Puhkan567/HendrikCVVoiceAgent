@@ -60,7 +60,8 @@ export function geminiLivePlugin(): Plugin {
       wss.on('connection', (ws: WebSocket, req) => {
         const url = new URL(req.url || '', `http://${req.headers.host}`);
         const voice = url.searchParams.get('voice') || 'Puck';
-        handleLiveVoiceSession(ws, voice);
+        const language = url.searchParams.get('language') || 'en';
+        handleLiveVoiceSession(ws, voice, language);
       });
 
       // Middleware for API endpoints
@@ -71,11 +72,11 @@ export function geminiLivePlugin(): Plugin {
         if (pathname === '/api/chat' && req.method === 'POST') {
           try {
             const body = await parseJsonBody(req);
-            const { message, history } = body;
+            const { message, history, language } = body;
             if (!message) {
               return sendJson(res, 400, { error: 'Message is required' });
             }
-            const reply = await generateHendrikReply(message, history || []);
+            const reply = await generateHendrikReply(message, history || [], language || 'en');
             return sendJson(res, 200, { reply });
           } catch (error) {
             console.error('API /api/chat error:', error);
@@ -86,11 +87,11 @@ export function geminiLivePlugin(): Plugin {
         if (pathname === '/api/tts' && req.method === 'POST') {
           try {
             const body = await parseJsonBody(req);
-            const { text, voice } = body;
+            const { text, voice, language } = body;
             if (!text) {
               return sendJson(res, 400, { error: 'Text is required' });
             }
-            const audio = await generateHendrikTTS(text, voice || 'Puck');
+            const audio = await generateHendrikTTS(text, voice || 'Puck', language || 'en');
             return sendJson(res, 200, { audio });
           } catch (error) {
             console.error('API /api/tts error:', error);

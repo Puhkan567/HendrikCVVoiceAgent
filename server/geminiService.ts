@@ -2,27 +2,34 @@ import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
 import type { WebSocket } from 'ws';
 
 export const HENDRIK_SYSTEM_INSTRUCTION = `
-You are the voice assistant representing Hendrik Puhkan. You speak as Hendrik, in first person ("I"), in conversations with recruiters, employers, and clients.
+You are the voice assistant representing Hendrik Puhkan. You speak as Hendrik, in first person ("I" / "mina"), in conversations with recruiters, employers, and clients.
 
 CRITICAL INSTRUCTIONS & IDENTITY:
 - OPENING LINE:
-  When starting a new conversation or asked to greet, say:
+  When starting a new conversation or asked to greet:
+  If speaking English:
   "Hi, I'm an AI assistant representing Hendrik Puhkan. I can tell you about my background, skills, and projects. What would you like to know?"
+  If speaking Estonian:
+  "Tere! Olen Hendrik Puhkanit esindav tehisintellekti häälassistent. Saan rääkida oma haridusest, töökogemusest ja oskustest. Mida sooviksite teada?"
 
 SOURCES & FACTS:
 - The facts below from my CV are your ONLY source for my education, experience, skills, projects, and dates.
-- If something is not in the CV, say: "I'd rather not guess on that, but I can follow up directly." Never invent employers, dates, numbers, or skills.
+- If something is not in the CV, say:
+  In English: "I'd rather not guess on that, but I can follow up directly."
+  In Estonian: "Ma pigem ei hakkaks selle kohta oletama, kuid võin teile otse järelinfot saata."
+- Never invent employers, dates, numbers, or skills.
 
-SPEAKING STYLE (CRITICAL FOR VOICE):
+SPEAKING STYLE (CRITICAL FOR SPOKEN VOICE):
 - This is a spoken voice conversation. Keep answers to 2-4 short, punchy sentences.
-- Use natural, plain spoken language.
-- DO NOT use bullet points, numbered lists, markdown asterisks, bolding, or headers. Pure conversational dialogue only.
+- Use natural, plain spoken language with natural pacing and confidence.
+- DO NOT use bullet points, numbered lists, markdown asterisks, bolding, or headers. Pure spoken dialogue only.
 - Be confident and direct, not salesy. Do not recite the CV line by line.
-- For "tell me about yourself": Give a concise 30-second summary: who I am, what I've done, and what I'm looking for.
+- For "tell me about yourself" / "räägi endast": Give a concise 30-second summary: who I am, what I've done, and what I'm looking for.
 - For experience questions: Mention what I did, the tangible result, and what I learned.
 - Offer to go deeper only when it feels natural in conversation.
 
 LANGUAGE HANDLING:
+- Hendrik is a native Estonian speaker and fluent in English.
 - Reply in the language the caller uses (English, Estonian, French, etc.) and switch immediately if they switch.
 
 BOUNDARIES & GUARDRAILS:
@@ -75,8 +82,17 @@ function getGenAI() {
 /**
  * Generate a text response for Hendrik Puhkan
  */
-export async function generateHendrikReply(prompt: string, history: { role: string; text: string }[] = []) {
+export async function generateHendrikReply(
+  prompt: string,
+  history: { role: string; text: string }[] = [],
+  preferredLanguage = 'en'
+) {
   const ai = getGenAI();
+
+  const languagePrompt =
+    preferredLanguage === 'et'
+      ? 'Please respond in natural, authentic Estonian as Hendrik.'
+      : 'Please respond in fluent, natural English as Hendrik.';
 
   const formattedContents = [
     ...history.slice(-6).map((h) => ({
@@ -85,7 +101,7 @@ export async function generateHendrikReply(prompt: string, history: { role: stri
     })),
     {
       role: 'user',
-      parts: [{ text: prompt }],
+      parts: [{ text: `${prompt}\n[Context: ${languagePrompt}]` }],
     },
   ];
 
@@ -94,20 +110,30 @@ export async function generateHendrikReply(prompt: string, history: { role: stri
     contents: formattedContents,
     config: {
       systemInstruction: HENDRIK_SYSTEM_INSTRUCTION,
-      temperature: 0.7,
+      temperature: 0.65,
       topP: 0.9,
     },
   });
 
-  return response.text || "I'd rather not guess on that, but I can follow up directly.";
+  return (
+    response.text ||
+    (preferredLanguage === 'et'
+      ? 'Ma pigem ei hakkaks selle kohta oletama, kuid võin teile otse järelinfot saata.'
+      : "I'd rather not guess on that, but I can follow up directly.")
+  );
 }
 
 /**
  * Generate high quality speech audio using Gemini 3.8 Flash Lite TTS
  * Returns base64-encoded WAV audio.
  */
-export async function generateHendrikTTS(textToSpeak: string, voiceName = 'Puck') {
+export async function generateHendrikTTS(textToSpeak: string, voiceName = 'Puck', language = 'en') {
   const ai = getGenAI();
+
+  const styleHint =
+    language === 'et'
+      ? 'Young, energetic, articulate native Estonian entrepreneur and student, speaking with natural Estonian pronunciation'
+      : 'Young, energetic, confident and articulate business student and entrepreneur from Tallinn';
 
   const response = await ai.models.generateContent({
     model: 'gemini-3.8-flash-lite-tts',
@@ -118,7 +144,7 @@ export async function generateHendrikTTS(textToSpeak: string, voiceName = 'Puck'
           {
             text: textToSpeak,
             speechMetadata: {
-              style: 'Young, energetic, confident and articulate business student and entrepreneur from Tallinn',
+              style: styleHint,
             },
           },
         ],
@@ -142,8 +168,12 @@ export async function generateHendrikTTS(textToSpeak: string, voiceName = 'Puck'
  * Live API connection bridge for WebSocket
  * Connects browser WebSocket to Gemini 3.8 Live API
  */
-export async function handleLiveVoiceSession(clientWs: WebSocket, voiceName = 'Puck') {
+export async function handleLiveVoiceSession(clientWs: WebSocket, voiceName = 'Puck', language = 'en') {
   const ai = getGenAI();
+
+  const systemInstructionWithLang = `${HENDRIK_SYSTEM_INSTRUCTION}\nPrimary language preference requested by caller: ${
+    language === 'et' ? 'Estonian (eesti keel)' : 'English'
+  }. Remember to switch language instantly if the user speaks another language.`;
 
   try {
     const session = await ai.live.connect({
@@ -155,17 +185,15 @@ export async function handleLiveVoiceSession(clientWs: WebSocket, voiceName = 'P
             prebuiltVoiceConfig: { voiceName: voiceName || 'Puck' },
           },
         },
-        systemInstruction: HENDRIK_SYSTEM_INSTRUCTION,
+        systemInstruction: systemInstructionWithLang,
       },
       callbacks: {
         onmessage: (message: LiveServerMessage) => {
-          // Check for audio
           const audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
           if (audio && clientWs.readyState === 1) {
             clientWs.send(JSON.stringify({ type: 'audio', audio }));
           }
 
-          // Check for text transcript if present
           const text = message.serverContent?.modelTurn?.parts?.[0]?.text;
           if (text && clientWs.readyState === 1) {
             clientWs.send(JSON.stringify({ type: 'transcript', text }));
@@ -195,7 +223,6 @@ export async function handleLiveVoiceSession(clientWs: WebSocket, voiceName = 'P
 
     clientWs.send(JSON.stringify({ type: 'ready', message: 'Gemini Live session established' }));
 
-    // Listen for client audio packets or text
     clientWs.on('message', (rawData) => {
       try {
         const msg = JSON.parse(rawData.toString());

@@ -22,11 +22,11 @@ const savedLeads: any[] = [];
 // Gemini chat API
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, history } = req.body;
+    const { message, history, language } = req.body;
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
-    const reply = await generateHendrikReply(message, history || []);
+    const reply = await generateHendrikReply(message, history || [], language || 'en');
     res.json({ reply });
   } catch (err) {
     console.error('Chat error:', err);
@@ -37,11 +37,11 @@ app.post('/api/chat', async (req, res) => {
 // Gemini TTS API
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voice } = req.body;
+    const { text, voice, language } = req.body;
     if (!text) {
       return res.status(400).json({ error: 'Text is required' });
     }
-    const audio = await generateHendrikTTS(text, voice || 'Puck');
+    const audio = await generateHendrikTTS(text, voice || 'Puck', language || 'en');
     res.json({ audio });
   } catch (err) {
     console.error('TTS error:', err);
@@ -74,7 +74,8 @@ const wss = new WebSocketServer({ server, path: '/live' });
 wss.on('connection', (ws: WebSocket, req) => {
   const url = new URL(req.url || '', `http://${req.headers.host}`);
   const voice = url.searchParams.get('voice') || 'Puck';
-  handleLiveVoiceSession(ws, voice);
+  const language = url.searchParams.get('language') || 'en';
+  handleLiveVoiceSession(ws, voice, language);
 });
 
 // Serve frontend static assets in production

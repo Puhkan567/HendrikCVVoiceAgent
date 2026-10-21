@@ -4,9 +4,10 @@ interface AudioVisualizerProps {
   analyser: AnalyserNode | null;
   isActive: boolean;
   mode: 'speaking' | 'listening' | 'idle';
+  isDark: boolean;
 }
 
-export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ analyser, isActive, mode }) => {
+export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ analyser, isActive, mode, isDark }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -29,9 +30,9 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ analyser, isAc
         analyser.getByteFrequencyData(dataArray);
       }
 
-      const barCount = 28;
-      const barWidth = 3;
-      const gap = 4;
+      const barCount = 32;
+      const barWidth = 2.5;
+      const gap = 3.5;
       const totalWidth = barCount * (barWidth + gap) - gap;
       const startX = (width - totalWidth) / 2;
 
@@ -41,35 +42,43 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ analyser, isAc
           const index = Math.floor((i / barCount) * (dataArray.length / 2));
           value = dataArray[index] / 255;
         } else if (isActive) {
-          // Synthetic ambient wave if active but no direct node connected
+          // Subtle synthetic acoustic wave
           const time = Date.now() * 0.005;
-          value = 0.3 + 0.5 * Math.sin(time + i * 0.4) * Math.cos(time * 0.5 + i * 0.2);
+          value = 0.25 + 0.55 * Math.sin(time + i * 0.35) * Math.cos(time * 0.4 + i * 0.2);
         } else {
-          // Subtle resting breathing wave
-          const time = Date.now() * 0.002;
-          value = 0.12 + 0.08 * Math.sin(time + i * 0.3);
+          // Minimalist breathing resting wave
+          const time = Date.now() * 0.0018;
+          value = 0.08 + 0.06 * Math.sin(time + i * 0.25);
         }
 
-        const barHeight = Math.max(4, value * (height - 8));
+        const barHeight = Math.max(3, value * (height - 6));
         const x = startX + i * (barWidth + gap);
         const y = (height - barHeight) / 2;
 
-        // Gradient based on state
+        // Nordic Ice-Blue & Slate gradients
         const gradient = ctx.createLinearGradient(0, y, 0, y + barHeight);
         if (mode === 'speaking') {
-          gradient.addColorStop(0, '#818cf8'); // Indigo
-          gradient.addColorStop(1, '#c084fc'); // Purple
+          // Nordic Ice-Blue active
+          gradient.addColorStop(0, '#38bdf8');
+          gradient.addColorStop(1, '#0284c7');
         } else if (mode === 'listening') {
-          gradient.addColorStop(0, '#34d399'); // Emerald
-          gradient.addColorStop(1, '#06b6d4'); // Cyan
+          // Nordic Emerald listening
+          gradient.addColorStop(0, '#34d399');
+          gradient.addColorStop(1, '#059669');
         } else {
-          gradient.addColorStop(0, '#475569'); // Slate
-          gradient.addColorStop(1, '#334155');
+          // Resting subtle slate/platinum
+          if (isDark) {
+            gradient.addColorStop(0, '#334155');
+            gradient.addColorStop(1, '#1e293b');
+          } else {
+            gradient.addColorStop(0, '#cbd5e1');
+            gradient.addColorStop(1, '#94a3b8');
+          }
         }
 
         ctx.fillStyle = gradient;
         ctx.beginPath();
-        ctx.roundRect(x, y, barWidth, barHeight, 2);
+        ctx.roundRect(x, y, barWidth, barHeight, 1.5);
         ctx.fill();
       }
     };
@@ -79,13 +88,13 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ analyser, isAc
     return () => {
       cancelAnimationFrame(animationId);
     };
-  }, [analyser, isActive, mode]);
+  }, [analyser, isActive, mode, isDark]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={220}
-      height={52}
+      width={240}
+      height={46}
       className="mx-auto block"
     />
   );
