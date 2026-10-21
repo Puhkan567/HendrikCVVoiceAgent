@@ -50,7 +50,11 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose, def
       }
     } catch (err) {
       console.error('Contact error:', err);
-      setIsSuccess(true);
+      alert(
+        language === 'et'
+          ? 'Andmete saatmine ebaõnnestus. Palun kirjutage otse aadressile hendrik.puhkan@gmail.com.'
+          : 'Could not submit details at this moment. Please email hendrik.puhkan@gmail.com directly.'
+      );
     } finally {
       setIsSubmitting(false);
     }

@@ -1,5 +1,4 @@
-import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
-import type { WebSocket } from 'ws';
+import { GoogleGenAI, Modality } from '@google/genai';
 
 export const HENDRIK_SYSTEM_INSTRUCTION = `
 You are the voice assistant representing Hendrik Puhkan. You speak as Hendrik, in first person ("I" / "mina"), in conversations with recruiters, employers, and clients.
@@ -64,7 +63,7 @@ CV FACTS FOR HENDRIK PUHKAN:
   * Passionate about tennis, gym, and music.
 `.trim();
 
-function getGenAI() {
+function getGenAI(apiVersion?: string) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.warn('GEMINI_API_KEY environment variable is not set!');
@@ -72,6 +71,7 @@ function getGenAI() {
   return new GoogleGenAI({
     apiKey: apiKey || '',
     httpOptions: {
+      ...(apiVersion ? { apiVersion } : {}),
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -164,93 +164,62 @@ export async function generateHendrikTTS(textToSpeak: string, voiceName = 'Puck'
   return base64Audio || null;
 }
 
-/**
- * Live API connection bridge for WebSocket
- * Connects browser WebSocket to Gemini 3.8 Live API
- */
-export async function handleLiveVoiceSession(clientWs: WebSocket, voiceName = 'Puck', language = 'en') {
-  const ai = getGenAI();
+export const LIVE_MODEL = 'gemini-3.8-live';
 
-  const systemInstructionWithLang = `${HENDRIK_SYSTEM_INSTRUCTION}\nPrimary language preference requested by caller: ${
+/** Live sessions started with a token can last at most this long. */
+const LIVE_SESSION_MAX_MS = 10 * 60 * 1000;
+
+/** Voice names are passed straight to Gemini, so only allow plain names. */
+export function sanitizeVoice(voice: unknown): string {
+  return typeof voice === 'string' && /^[A-Za-z]{2,20}$/.test(voice) ? voice : 'Puck';
+}
+
+export function sanitizeLanguage(language: unknown): 'en' | 'et' {
+  return language === 'et' ? 'et' : 'en';
+}
+
+/**
+ * Mint a short-lived, single-use Gemini Live token.
+ *
+ * The browser connects to Gemini directly with this token, so no long-lived
+ * server (WebSocket proxy) is needed and the real API key never leaves the
+ * server. The system instruction, voice and model are locked inside the token,
+ * so the browser cannot change how the assistant behaves.
+ */
+export async function createLiveToken(voiceName = 'Puck', language = 'en') {
+  const ai = getGenAI('v1alpha');
+
+  const systemInstruction = `${HENDRIK_SYSTEM_INSTRUCTION}\nPrimary language preference requested by caller: ${
     language === 'et' ? 'Estonian (eesti keel)' : 'English'
   }. Remember to switch language instantly if the user speaks another language.`;
 
-  try {
-    const session = await ai.live.connect({
-      model: 'gemini-3.8-live',
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voiceName || 'Puck' },
+  const now = Date.now();
+  const expireTime = new Date(now + LIVE_SESSION_MAX_MS).toISOString();
+
+  const token = await ai.authTokens.create({
+    config: {
+      uses: 1,
+      expireTime,
+      newSessionExpireTime: new Date(now + 60 * 1000).toISOString(),
+      liveConnectConstraints: {
+        model: LIVE_MODEL,
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: voiceName || 'Puck' },
+            },
           },
-        },
-        systemInstruction: systemInstructionWithLang,
-      },
-      callbacks: {
-        onmessage: (message: LiveServerMessage) => {
-          const audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-          if (audio && clientWs.readyState === 1) {
-            clientWs.send(JSON.stringify({ type: 'audio', audio }));
-          }
-
-          const text = message.serverContent?.modelTurn?.parts?.[0]?.text;
-          if (text && clientWs.readyState === 1) {
-            clientWs.send(JSON.stringify({ type: 'transcript', text }));
-          }
-
-          if (message.serverContent?.interrupted && clientWs.readyState === 1) {
-            clientWs.send(JSON.stringify({ type: 'interrupted', interrupted: true }));
-          }
-
-          if (message.serverContent?.turnComplete && clientWs.readyState === 1) {
-            clientWs.send(JSON.stringify({ type: 'turnComplete' }));
-          }
-        },
-        onclose: () => {
-          if (clientWs.readyState === 1) {
-            clientWs.send(JSON.stringify({ type: 'sessionClosed' }));
-          }
-        },
-        onerror: (err) => {
-          console.error('Gemini Live session error:', err);
-          if (clientWs.readyState === 1) {
-            clientWs.send(JSON.stringify({ type: 'error', error: String(err) }));
-          }
+          systemInstruction,
         },
       },
-    });
+      httpOptions: { apiVersion: 'v1alpha' },
+    },
+  });
 
-    clientWs.send(JSON.stringify({ type: 'ready', message: 'Gemini Live session established' }));
-
-    clientWs.on('message', (rawData) => {
-      try {
-        const msg = JSON.parse(rawData.toString());
-        if (msg.type === 'audio' && msg.audio) {
-          session.sendRealtimeInput({
-            audio: { data: msg.audio, mimeType: 'audio/pcm;rate=16000' },
-          });
-        } else if (msg.type === 'text' && msg.text) {
-          session.sendRealtimeInput({
-            text: msg.text,
-          });
-        }
-      } catch (err) {
-        console.error('Error handling incoming client message:', err);
-      }
-    });
-
-    clientWs.on('close', () => {
-      try {
-        session.close();
-      } catch {
-        // ignore
-      }
-    });
-  } catch (error) {
-    console.error('Failed to connect to Gemini Live API:', error);
-    if (clientWs.readyState === 1) {
-      clientWs.send(JSON.stringify({ type: 'error', error: String(error) }));
-    }
+  if (!token.name) {
+    throw new Error('Gemini did not return an ephemeral token');
   }
+
+  return { token: token.name, model: LIVE_MODEL, expiresAt: expireTime };
 }

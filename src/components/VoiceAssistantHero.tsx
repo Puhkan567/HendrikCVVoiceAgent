@@ -11,6 +11,7 @@ import {
   Volume2,
   AlertCircle,
 } from 'lucide-react';
+import type { LiveServerMessage, Session } from '@google/genai';
 import { AudioVisualizer } from './AudioVisualizer';
 import { LiveAudioPlayer, floatTo16BitPCM, arrayBufferToBase64 } from '../utils/audioUtils';
 import { HENDRIK_CV, OPENING_LINES } from '../data/hendrikCv';
@@ -57,7 +58,8 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [liveError, setLiveError] = useState<string | null>(null);
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+  const isMicMutedRef = useRef<boolean>(false);
   const audioPlayerRef = useRef<LiveAudioPlayer | null>(null);
   const inputAudioCtxRef = useRef<AudioContext | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -80,7 +82,29 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
   const speakingState = isAssistantSpeaking || isAudioPlaying;
   const currentOpeningLine = OPENING_LINES[language];
 
-  // Live WebSocket session connection
+  // Handle one message from the Gemini Live session
+  const handleLiveMessage = (message: LiveServerMessage) => {
+    const parts = message.serverContent?.modelTurn?.parts ?? [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        audioPlayerRef.current?.playChunk(part.inlineData.data);
+      }
+      if (part.text) {
+        liveTranscriptBufferRef.current += part.text;
+      }
+    }
+
+    if (message.serverContent?.interrupted) {
+      audioPlayerRef.current?.stop();
+    }
+
+    if (message.serverContent?.turnComplete) {
+      liveTranscriptBufferRef.current = '';
+    }
+  };
+
+  // Live session: the browser connects straight to Gemini using a short-lived
+  // token minted by /api/live-token (the real API key never reaches the browser).
   const startLiveSession = async () => {
     setLiveError(null);
     setLiveStatus('connecting');
@@ -96,67 +120,65 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
       });
       micStreamRef.current = stream;
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/live?voice=${selectedVoice}&language=${language}`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      const tokenRes = await fetch('/api/live-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: selectedVoice, language }),
+      });
+      if (!tokenRes.ok) {
+        throw new Error(`Live token request failed (${tokenRes.status})`);
+      }
+      const { token, model } = (await tokenRes.json()) as { token: string; model: string };
 
-      ws.onopen = () => {
-        setLiveStatus('connected');
-        setIsLiveActive(true);
-        setupAudioRecording(stream, ws);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'audio' && data.audio) {
-            audioPlayerRef.current?.playChunk(data.audio);
-          } else if (data.type === 'transcript' && data.text) {
-            liveTranscriptBufferRef.current += data.text;
-          } else if (data.type === 'interrupted') {
-            audioPlayerRef.current?.stop();
-          } else if (data.type === 'turnComplete') {
-            if (liveTranscriptBufferRef.current.trim()) {
-              liveTranscriptBufferRef.current = '';
-            }
-          } else if (data.type === 'error') {
-            console.error('Gemini Live WS error:', data.error);
+      // Loaded on demand so the Gemini SDK isn't part of the initial page download.
+      const { GoogleGenAI, Modality } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
+      const session = await ai.live.connect({
+        model,
+        // Model, voice and system instruction are locked inside the token.
+        config: { responseModalities: [Modality.AUDIO] },
+        callbacks: {
+          onmessage: handleLiveMessage,
+          onerror: (err: unknown) => {
+            console.error('Gemini Live session error:', err);
+            setLiveStatus('error');
             setLiveError(
               language === 'et'
-                ? 'Reaalaja hääleühendus suunatakse tavarežiimi.'
-                : 'Real-time live voice session falling back to standard voice mode.'
+                ? 'Ühendust ei õnnestunud luua. Kasutada saab kõneks teisendamist.'
+                : 'Could not connect real-time socket. Standard tap-to-talk voice is ready.'
             );
-          }
-        } catch (e) {
-          console.error('Failed to parse WS message:', e);
-        }
-      };
+            stopLiveSession();
+          },
+          onclose: () => {
+            // Ignore the close event of a session we already tore down ourselves.
+            if (sessionRef.current === session) {
+              stopLiveSession();
+            }
+          },
+        },
+      });
+      sessionRef.current = session;
 
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-        setLiveStatus('error');
-        setLiveError(
-          language === 'et'
-            ? 'Ühendust ei õnnestunud luua. Kasutada saab kõneks teisendamist.'
-            : 'Could not connect real-time socket. Standard tap-to-talk voice is ready.'
-        );
-        stopLiveSession();
-      };
-
-      ws.onclose = () => {
-        setLiveStatus('disconnected');
-        setIsLiveActive(false);
-      };
+      setLiveStatus('connected');
+      setIsLiveActive(true);
+      setupAudioRecording(stream, session);
     } catch (err: any) {
-      console.error('Mic or WebSocket setup failed:', err);
+      console.error('Mic or live session setup failed:', err);
       setLiveStatus('error');
-      setLiveError(err.message || 'Microphone access denied or WebSocket failure.');
+      setLiveError(
+        err?.name === 'NotAllowedError'
+          ? language === 'et'
+            ? 'Mikrofonile juurdepääs on keelatud. Lubage mikrofon brauseri seadetes.'
+            : 'Microphone access was denied. Allow the microphone in your browser settings.'
+          : language === 'et'
+          ? 'Ühendust ei õnnestunud luua. Kasutada saab kõneks teisendamist.'
+          : 'Could not connect real-time socket. Standard tap-to-talk voice is ready.'
+      );
       stopLiveSession();
     }
   };
 
-  const setupAudioRecording = (stream: MediaStream, ws: WebSocket) => {
+  const setupAudioRecording = (stream: MediaStream, session: Session) => {
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const inputCtx = new AudioCtx({ sampleRate: 16000 });
@@ -170,17 +192,18 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
       processor.connect(inputCtx.destination);
 
       processor.onaudioprocess = (e) => {
-        if (isMicMuted || ws.readyState !== WebSocket.OPEN) return;
+        if (isMicMutedRef.current || sessionRef.current !== session) return;
         const inputData = e.inputBuffer.getChannelData(0);
         const pcm16Buffer = floatTo16BitPCM(inputData);
         const base64Audio = arrayBufferToBase64(pcm16Buffer);
 
-        ws.send(
-          JSON.stringify({
-            type: 'audio',
-            audio: base64Audio,
-          })
-        );
+        try {
+          session.sendRealtimeInput({
+            audio: { data: base64Audio, mimeType: 'audio/pcm;rate=16000' },
+          });
+        } catch (err) {
+          console.warn('Failed to send audio chunk:', err);
+        }
       };
     } catch (e) {
       console.error('Failed to initialize audio recording node:', e);
@@ -200,9 +223,14 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
       micStreamRef.current.getTracks().forEach((track) => track.stop());
       micStreamRef.current = null;
     }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    if (session) {
+      try {
+        session.close();
+      } catch {
+        // already closed
+      }
     }
     audioPlayerRef.current?.stop();
     setIsLiveActive(false);
@@ -258,8 +286,8 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
     const query = queryText || textInput.trim();
     if (!query) return;
 
-    if (isLiveActive && wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'text', text: query }));
+    if (isLiveActive && sessionRef.current) {
+      sessionRef.current.sendRealtimeInput({ text: query });
     } else {
       onSendMessage(query);
     }
@@ -457,7 +485,10 @@ export const VoiceAssistantHero: React.FC<VoiceAssistantHeroProps> = ({
           {/* Live Mic Mute Toggle */}
           {isLiveActive && (
             <button
-              onClick={() => setIsMicMuted(!isMicMuted)}
+              onClick={() => {
+                isMicMutedRef.current = !isMicMuted;
+                setIsMicMuted(!isMicMuted);
+              }}
               className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-medium border transition-colors ${
                 isMicMuted
                   ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300'
